@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAITH - MORTIS</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            background-color: #000;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+            border: 4px solid #333;
+        }
+
+        canvas {
+            display: block;
+            image-rendering: pixelated; /* 픽셀 아트 선명도 유지 */
+            image-rendering: crisp-edges;
+        }
+
+        .ui-text {
+            position: absolute;
+            bottom: 10px;
+            width: 100%;
+            text-align: center;
+            color: #00ff00;
+            font-size: 14px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            text-shadow: 2px 2px #000;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="320" height="200"></canvas>
+    <div class="ui-text" id="ui">HOLD [SPACE] TO RAISE HOLY CROSS</div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const uiText = document.getElementById('ui');
+
+    // 화면 스케일링 (Atari 스타일의 저해상도를 화면에 확대)
+    const SCALE = 3;
+    canvas.style.width = `${canvas.width * SCALE}px`;
+    canvas.style.height = `${canvas.height * SCALE}px`;
+
+    // 키 입력 상태
+    const keys = {};
+
+    window.addEventListener('keydown', e => keys[e.code] = true);
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    // 신부님 (플레이어)
+    const player = {
+        x: 150,
+        y: 100,
+        width: 10,
+        height: 16,
+        speed: 1.2,
+        isHoldingCross: false,
+        facing: 'down' // up, down, left, right
+    };
+
+    // 악마 (적)
+    const demon = {
+        x: 40,
+        y: 40,
+        width: 12,
+        height: 16,
+        speed: 0.5,
+        health: 100,
+        maxHealth: 100,
+        alive: true,
+        isExorcising: false
+    };
+
+    // 게임 상태
+    let gameState = 'PLAYING'; // PLAYING, GAMEOVER, VICTORY
+    let shakeTimer = 0;
+
+    // 업데이트 루프
+    function update() {
+        if (gameState !== 'PLAYING') return;
+
+        // 플레이어 이동
+        let dx = 0;
+        let dy = 0;
+
+        if (keys['KeyW'] || keys['ArrowUp']) { dy -= 1; player.facing = 'up'; }
+        if (keys['KeyS'] || keys['ArrowDown']) { dy += 1; player.facing = 'down'; }
+        if (keys['KeyA'] || keys['ArrowLeft']) { dx -= 1; player.facing = 'left'; }
+        if (keys['KeyD'] || keys['ArrowRight']) { dx += 1; player.facing = 'right'; }
+
+        // 대각선 이동 속도 보정
+        if (dx !== 0 && dy !== 0) {
+            dx *= 0.7071;
+            dy *= 0.7071;
+        }
+
+        player.x += dx * player.speed;
+        player.y += dy * player.speed;
+
+        // 맵 경계 제한
+        player.x = Math.max(10, Math.min(canvas.width - 20, player.x));
+        player.y = Math.max(10, Math.min(canvas.height - 26, player.y));
+
+        // 십자가 들기
+        player.isHoldingCross = !!keys['Space'];
+
+        // 악마 AI (플레이어 추적)
+        if (demon.alive) {
+            const angle = Math.atan2(player.y - demon.y, player.x - demon.x);
+            demon.x += Math.cos(angle) * demon.speed;
+            demon.y += Math.sin(angle) * demon.speed;
+
+            // 십자가 빛 퇴마 영역 충돌 체크
+            demon.isExorcising = false;
+            if (player.isHoldingCross) {
+                // 십자가의 조준/빛 영역 계산
+                const crossLightRadius = 35;
+                const distToDemon = Math.hypot(player.x - demon.x, player.y - demon.y);
+
+                if (distToDemon < crossLightRadius) {
+                    demon.health -= 0.8; // 퇴마 데미지
+                    demon.isExorcising = true;
+                    shakeTimer = 2; // 퇴마 시 화면 흔들림
+
+                    if (demon.health <= 0) {
+                        demon.alive = false;
+                        gameState = 'VICTORY';
+                        uiText.innerText = "DEMON EXORCISED. YOU SURVIVED.";
+                        uiText.style.color = "#00ffff";
+                    }
+                }
+            }
+
+            // 플레이어와 악마 충돌 (게임 오버)
+            const playerDist = Math.hypot(player.x - demon.x, player.y - demon.y);
+            if (playerDist < 10) {
+                gameState = 'GAMEOVER';
+                uiText.innerText = "MORTIS (GAME OVER - PRESS F5 TO RESTART)";
+                uiText.style.color = "#ff0000";
+            }
+        }
+    }
+
+    // 렌더링 루프
+    function draw() {
+        // 화면 흔들림 연출
+        ctx.save();
+        if (shakeTimer > 0) {
+            ctx.translate((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2);
+            shakeTimer--;
+        }
+
+        // 클리어 (검은 배경)
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 간단한 십자가/교회 바닥 장식
+        ctx.strokeStyle = '#111122';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < canvas.width; i += 20) {
+            ctx.beginPath();
+            ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height);
+            ctx.stroke();
+        }
+
+        // 악마 그리기 (스푸키한 붉은 픽셀 몬스터)
+        if (demon.alive) {
+            ctx.fillStyle = demon.isExorcising ? '#ffffff' : '#ff0000'; // 퇴마 당할 때 흰색으로 번쩍임
+            ctx.fillRect(demon.x, demon.y, demon.width, demon.height);
+
+            // 악마 눈
+            ctx.fillStyle = '#ffff00';
+            ctx.fillRect(demon.x + 2, demon.y + 4, 2, 2);
+            ctx.fillRect(demon.x + 8, demon.y + 4, 2, 2);
+
+            // 악마 체력바 (퇴마 중일 때 표시)
+            if (demon.isExorcising) {
+                ctx.fillStyle = '#555';
+                ctx.fillRect(demon.x - 2, demon.y - 6, 16, 2);
+                ctx.fillStyle = '#00ff00';
+                ctx.fillRect(demon.x - 2, demon.y - 6, (demon.health / demon.maxHealth) * 16, 2);
+            }
+        }
+
+        // 플레이어 (신부 - 블루/화이트 시그니처 픽셀)
+        ctx.fillStyle = '#0055ff'; // 신부복 (파란색)
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+        ctx.fillStyle = '#ffffff'; // 로만 칼라/머리
+        ctx.fillRect(player.x + 3, player.y - 2, 4, 3);
+
+        // 십자가 들기 연출
+        if (player.isHoldingCross) {
+            // 십자가 빛 (성스러운 오라)
+            ctx.fillStyle = 'rgba(255, 255, 200, 0.2)';
+            ctx.beginPath();
+            ctx.arc(player.x + 5, player.y + 8, 35, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 십자가 그리기
+            ctx.fillStyle = '#ffffff';
+            // 세로
+            ctx.fillRect(player.x + 4, player.y - 8, 2, 8);
+            // 가로
+            ctx.fillRect(player.x + 1, player.y - 6, 8, 2);
+        }
+
+        // 게임 오버 연출 (FAITH 특유의 MORTIS 연출)
+        if (gameState === 'GAMEOVER') {
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#ff0000';
+            ctx.font = '20px "Courier New"';
+            ctx.fillText("M O R T I S", 95, 105);
+        }
+
+        ctx.restore();
+    }
+
+    // 메인 게임 루프
+    function gameLoop() {
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    // 게임 시작
+    gameLoop();
+</script>
+</body>
+</html>
