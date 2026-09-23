@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FAITH - MORTIS</title>
+    <title>FAITH Style Web Game - MORTIS with BGM</title>
     <style>
         * {
             margin: 0;
@@ -30,7 +30,7 @@
 
         canvas {
             display: block;
-            image-rendering: pixelated; /* 픽셀 아트 선명도 유지 */
+            image-rendering: pixelated;
             image-rendering: crisp-edges;
         }
 
@@ -40,9 +40,9 @@
             width: 100%;
             text-align: center;
             color: #00ff00;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: bold;
-            letter-spacing: 2px;
+            letter-spacing: 1px;
             text-shadow: 2px 2px #000;
             pointer-events: none;
         }
@@ -52,7 +52,7 @@
 
 <div id="game-container">
     <canvas id="gameCanvas" width="320" height="200"></canvas>
-    <div class="ui-text" id="ui">HOLD [SPACE] TO RAISE HOLY CROSS</div>
+    <div class="ui-text" id="ui">PRESS ANY KEY TO START AUDIO | HOLD [SPACE] FOR CROSS</div>
 </div>
 
 <script>
@@ -60,18 +60,90 @@
     const ctx = canvas.getContext('2d');
     const uiText = document.getElementById('ui');
 
-    // 화면 스케일링 (Atari 스타일의 저해상도를 화면에 확대)
     const SCALE = 3;
     canvas.style.width = `${canvas.width * SCALE}px`;
     canvas.style.height = `${canvas.height * SCALE}px`;
 
-    // 키 입력 상태
     const keys = {};
 
-    window.addEventListener('keydown', e => keys[e.code] = true);
+    // -------------------------------------------------------------
+    // AUDIO SYSTEM (Web Audio API - Synthesizer & BGM Engine)
+    // -------------------------------------------------------------
+    let audioCtx = null;
+    let isAudioInitialized = false;
+
+    function initAudio() {
+        if (isAudioInitialized) return;
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        isAudioInitialized = true;
+        startBGM(); // BGM 시작
+    }
+
+    // 8비트 사운드 생성용 범용 함수
+    function playTone(freq, type = 'sawtooth', duration = 0.1, vol = 0.1) {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    }
+
+    // FAITH 특유의 기괴한 저음 불협화음 BGM 루프
+    const bgmNotes = [65.41, 69.30, 65.41, 61.74, 58.27, 61.74, 55.00, 58.27]; // C2, C#2, C2, B1, A#1, B1, A1, A#1
+    let bgmIndex = 0;
+
+    function startBGM() {
+        setInterval(() => {
+            if (gameState === 'PLAYING' && audioCtx) {
+                const note = bgmNotes[bgmIndex % bgmNotes.length];
+                playTone(note, 'sawtooth', 0.25, 0.05);
+                // 불협화음 옥타브 레이어 추가
+                if (bgmIndex % 2 === 0) {
+                    playTone(note * 1.5, 'square', 0.15, 0.02);
+                }
+                bgmIndex++;
+            }
+        }, 300);
+    }
+
+    // 효과음 - 퇴마 노이즈 사운드
+    function playExorcismSFX() {
+        if (!audioCtx || Math.random() > 0.3) return;
+        playTone(300 + Math.random() * 800, 'square', 0.05, 0.03);
+    }
+
+    // 효과음 - Game Over (MORTIS)
+    function playDeathSFX() {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 1.5);
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 1.5);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 1.5);
+    }
+
+    // 키 입력 이벤트
+    window.addEventListener('keydown', e => {
+        initAudio(); // 첫 입력 시 오디오 컨텍스트 개시
+        keys[e.code] = true;
+    });
     window.addEventListener('keyup', e => keys[e.code] = false);
 
-    // 신부님 (플레이어)
+    // -------------------------------------------------------------
+    // GAME OBJECTS & LOGIC
+    // -------------------------------------------------------------
     const player = {
         x: 150,
         y: 100,
@@ -79,10 +151,9 @@
         height: 16,
         speed: 1.2,
         isHoldingCross: false,
-        facing: 'down' // up, down, left, right
+        facing: 'down'
     };
 
-    // 악마 (적)
     const demon = {
         x: 40,
         y: 40,
@@ -95,24 +166,18 @@
         isExorcising: false
     };
 
-    // 게임 상태
-    let gameState = 'PLAYING'; // PLAYING, GAMEOVER, VICTORY
+    let gameState = 'PLAYING';
     let shakeTimer = 0;
 
-    // 업데이트 루프
     function update() {
         if (gameState !== 'PLAYING') return;
 
-        // 플레이어 이동
-        let dx = 0;
-        let dy = 0;
-
+        let dx = 0, dy = 0;
         if (keys['KeyW'] || keys['ArrowUp']) { dy -= 1; player.facing = 'up'; }
         if (keys['KeyS'] || keys['ArrowDown']) { dy += 1; player.facing = 'down'; }
         if (keys['KeyA'] || keys['ArrowLeft']) { dx -= 1; player.facing = 'left'; }
         if (keys['KeyD'] || keys['ArrowRight']) { dx += 1; player.facing = 'right'; }
 
-        // 대각선 이동 속도 보정
         if (dx !== 0 && dy !== 0) {
             dx *= 0.7071;
             dy *= 0.7071;
@@ -121,64 +186,62 @@
         player.x += dx * player.speed;
         player.y += dy * player.speed;
 
-        // 맵 경계 제한
         player.x = Math.max(10, Math.min(canvas.width - 20, player.x));
         player.y = Math.max(10, Math.min(canvas.height - 26, player.y));
 
-        // 십자가 들기
         player.isHoldingCross = !!keys['Space'];
 
-        // 악마 AI (플레이어 추적)
+        if (player.isHoldingCross && Math.random() < 0.1) {
+            playTone(440, 'triangle', 0.05, 0.02); // 십자가 들고 있을 때 주기적 웅웅거림
+        }
+
         if (demon.alive) {
             const angle = Math.atan2(player.y - demon.y, player.x - demon.x);
             demon.x += Math.cos(angle) * demon.speed;
             demon.y += Math.sin(angle) * demon.speed;
 
-            // 십자가 빛 퇴마 영역 충돌 체크
             demon.isExorcising = false;
             if (player.isHoldingCross) {
-                // 십자가의 조준/빛 영역 계산
                 const crossLightRadius = 35;
                 const distToDemon = Math.hypot(player.x - demon.x, player.y - demon.y);
 
                 if (distToDemon < crossLightRadius) {
-                    demon.health -= 0.8; // 퇴마 데미지
+                    demon.health -= 0.8;
                     demon.isExorcising = true;
-                    shakeTimer = 2; // 퇴마 시 화면 흔들림
+                    shakeTimer = 2;
+                    playExorcismSFX(); // 퇴마 효과음 재생
 
                     if (demon.health <= 0) {
                         demon.alive = false;
                         gameState = 'VICTORY';
                         uiText.innerText = "DEMON EXORCISED. YOU SURVIVED.";
                         uiText.style.color = "#00ffff";
+                        playTone(523.25, 'sine', 0.5, 0.1); // 승리 징글
                     }
                 }
             }
 
-            // 플레이어와 악마 충돌 (게임 오버)
             const playerDist = Math.hypot(player.x - demon.x, player.y - demon.y);
             if (playerDist < 10) {
                 gameState = 'GAMEOVER';
-                uiText.innerText = "MORTIS (GAME OVER - PRESS F5 TO RESTART)";
+                uiText.innerText = "MORTIS (GAME OVER - REFRESH TO RESTART)";
                 uiText.style.color = "#ff0000";
+                playDeathSFX(); // 사망 효과음 재생
             }
         }
     }
 
-    // 렌더링 루프
     function draw() {
-        // 화면 흔들림 연출
         ctx.save();
         if (shakeTimer > 0) {
             ctx.translate((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 2);
             shakeTimer--;
         }
 
-        // 클리어 (검은 배경)
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // 간단한 십자가/교회 바닥 장식
+        // 격자 및 레트로 격벽
         ctx.strokeStyle = '#111122';
         ctx.lineWidth = 1;
         for (let i = 0; i < canvas.width; i += 20) {
@@ -187,17 +250,15 @@
             ctx.stroke();
         }
 
-        // 악마 그리기 (스푸키한 붉은 픽셀 몬스터)
+        // 악마
         if (demon.alive) {
-            ctx.fillStyle = demon.isExorcising ? '#ffffff' : '#ff0000'; // 퇴마 당할 때 흰색으로 번쩍임
+            ctx.fillStyle = demon.isExorcising ? '#ffffff' : '#ff0000';
             ctx.fillRect(demon.x, demon.y, demon.width, demon.height);
 
-            // 악마 눈
             ctx.fillStyle = '#ffff00';
             ctx.fillRect(demon.x + 2, demon.y + 4, 2, 2);
             ctx.fillRect(demon.x + 8, demon.y + 4, 2, 2);
 
-            // 악마 체력바 (퇴마 중일 때 표시)
             if (demon.isExorcising) {
                 ctx.fillStyle = '#555';
                 ctx.fillRect(demon.x - 2, demon.y - 6, 16, 2);
@@ -206,31 +267,27 @@
             }
         }
 
-        // 플레이어 (신부 - 블루/화이트 시그니처 픽셀)
-        ctx.fillStyle = '#0055ff'; // 신부복 (파란색)
+        // 플레이어
+        ctx.fillStyle = '#0055ff';
         ctx.fillRect(player.x, player.y, player.width, player.height);
-        ctx.fillStyle = '#ffffff'; // 로만 칼라/머리
+        ctx.fillStyle = '#ffffff';
         ctx.fillRect(player.x + 3, player.y - 2, 4, 3);
 
-        // 십자가 들기 연출
+        // 십자가
         if (player.isHoldingCross) {
-            // 십자가 빛 (성스러운 오라)
             ctx.fillStyle = 'rgba(255, 255, 200, 0.2)';
             ctx.beginPath();
             ctx.arc(player.x + 5, player.y + 8, 35, 0, Math.PI * 2);
             ctx.fill();
 
-            // 십자가 그리기
             ctx.fillStyle = '#ffffff';
-            // 세로
             ctx.fillRect(player.x + 4, player.y - 8, 2, 8);
-            // 가로
             ctx.fillRect(player.x + 1, player.y - 6, 8, 2);
         }
 
-        // 게임 오버 연출 (FAITH 특유의 MORTIS 연출)
+        // 게임 오버 (MORTIS)
         if (gameState === 'GAMEOVER') {
-            ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.4)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
             ctx.fillStyle = '#ff0000';
@@ -241,14 +298,12 @@
         ctx.restore();
     }
 
-    // 메인 게임 루프
     function gameLoop() {
         update();
         draw();
         requestAnimationFrame(gameLoop);
     }
 
-    // 게임 시작
     gameLoop();
 </script>
 </body>
